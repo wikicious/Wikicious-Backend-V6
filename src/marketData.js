@@ -32,6 +32,32 @@ function toNum(v, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function symbolCandidates(symbol) {
+  const raw = String(symbol || "").toUpperCase().trim();
+  if (!raw) return [];
+  const base = raw.endsWith("USDT") ? raw.slice(0, -4) : raw;
+  return Array.from(new Set([
+    raw,
+    base,
+    `${base}USDT`,
+    `${base}/USDT`,
+    `${base}-USDT`,
+    `${base}USD`,
+    `${base}/USD`,
+    `${base}-USD`,
+  ]));
+}
+
+function lookupExternalPrice(feed, symbol) {
+  if (!feed || typeof feed !== "object") return null;
+  for (const key of symbolCandidates(symbol)) {
+    if (Object.prototype.hasOwnProperty.call(feed, key)) {
+      return feed[key];
+    }
+  }
+  return null;
+}
+
 function updatePriceHistory(symbol, price, atMs) {
   if (!symbol || !price || !Number.isFinite(price)) return [];
   const prev = priceHistory.get(symbol) || [];
@@ -204,8 +230,8 @@ export async function refreshMarketSnapshot(force = false) {
             },
             signals,
             externalPrice: {
-              pyth: external?.pyth?.[m.symbol] ?? null,
-              chainlink: external?.chainlink?.[m.symbol] ?? null,
+              pyth: lookupExternalPrice(external?.pyth, m.symbol),
+              chainlink: lookupExternalPrice(external?.chainlink, m.symbol),
             },
           };
         }),
