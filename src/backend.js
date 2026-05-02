@@ -6,7 +6,7 @@ import { config } from "./config.js";
 import { runtime } from "./state.js";
 import { getTrackedPositions } from "./liquidator.js";
 import { getTrackedOrderIds } from "./orders.js";
-import { getMarketSnapshot } from "./marketData.js";
+import { getMarketSnapshot, refreshMarketSnapshot } from "./marketData.js";
 import { buildChatReplyWithLlm, buildStrategyInsights, buildTradeAdviceWithLlm, buildTradeDecision, tuneIdeasForPrompt } from "./ai.js";
 import { fetchAiContractsState } from "./aiContracts.js";
 import { fetchBusinessOverview } from "./businessFlows.js";
@@ -545,12 +545,14 @@ export function startBackendServer() {
     }
 
     if (req.method === "GET" && (url.pathname === "/markets" || url.pathname === "/v1/markets")) {
+      await refreshMarketSnapshot(getMarketSnapshot().count === 0);
       const snapshot = getMarketSnapshot();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
       return writeJson(req, res, 200, snapshot);
     }
 
     if (req.method === "GET" && (url.pathname === "/mapped-prices" || url.pathname === "/v1/mapped-prices")) {
+      await refreshMarketSnapshot(getMarketSnapshot().count === 0);
       const snapshot = getMarketSnapshot();
       const toPositiveFinite = (value) => {
         const num = Number(value);
