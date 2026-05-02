@@ -552,15 +552,15 @@ export function startBackendServer() {
 
     if (req.method === "GET" && (url.pathname === "/mapped-prices" || url.pathname === "/v1/mapped-prices")) {
       const snapshot = getMarketSnapshot();
+      const toPositiveFinite = (value) => {
+        const num = Number(value);
+        return Number.isFinite(num) && num > 0 ? num : null;
+      };
       const prices = (snapshot?.markets || []).map((m) => {
-        const chainlink = m?.externalPrice?.chainlink;
-        const pyth = m?.externalPrice?.pyth;
-        const mappedPrice = Number.isFinite(Number(chainlink))
-          ? Number(chainlink)
-          : Number.isFinite(Number(pyth))
-            ? Number(pyth)
-            : null;
-        const source = mappedPrice === null ? null : Number.isFinite(Number(chainlink)) ? "chainlink" : "pyth";
+        const chainlink = toPositiveFinite(m?.externalPrice?.chainlink);
+        const pyth = toPositiveFinite(m?.externalPrice?.pyth);
+        const mappedPrice = chainlink ?? pyth ?? null;
+        const source = chainlink !== null ? "chainlink" : pyth !== null ? "pyth" : null;
         return {
           marketIndex: m?.marketIndex ?? null,
           marketId: m?.marketId ?? null,
