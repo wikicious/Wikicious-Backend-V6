@@ -43,29 +43,29 @@ async function readJsonBody(req) {
   }
 }
 
-function writeJson(res, status, payload) {
+function writeJson(req, res, status, payload) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
-    "access-control-allow-origin": config.corsOrigin,
+    "access-control-allow-origin": resolveCorsOrigin(req),
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-headers": "content-type,authorization,x-api-key",
   });
   res.end(safeJson(payload));
 }
 
-function writeSseHead(res) {
+function writeSseHead(req, res) {
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache, no-transform",
     connection: "keep-alive",
-    "access-control-allow-origin": config.corsOrigin,
+    "access-control-allow-origin": resolveCorsOrigin(req),
   });
 }
 
-function writeMetrics(res, body) {
+function writeMetrics(req, res, body) {
   res.writeHead(200, {
     "content-type": "text/plain; version=0.0.4; charset=utf-8",
-    "access-control-allow-origin": config.corsOrigin,
+    "access-control-allow-origin": resolveCorsOrigin(req),
   });
   res.end(body);
 }
@@ -83,6 +83,18 @@ function getApiKey(req) {
     : "";
   const headerKey = req.headers["x-api-key"] || "";
   return `${bearer || headerKey}`;
+}
+
+
+function resolveCorsOrigin(req) {
+  const allowed = String(config.corsOrigin || "*")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (allowed.length === 0 || allowed.includes("*")) return "*";
+  const origin = req.headers.origin || "";
+  if (origin && allowed.includes(origin)) return origin;
+  return allowed[0];
 }
 
 export function isAuthorized(req) {
@@ -404,40 +416,40 @@ export function startBackendServer() {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
     if (req.method === "OPTIONS") {
-      return writeJson(res, 204, {});
+      return writeJson(req, res, 204, {});
     }
 
     const t0 = Date.now();
 
-    if (isPrivateRoute(url.pathname) && !isAuthorized(req)) {
-      return writeJson(res, 401, { error: "Unauthorized" });
-    }
-
     if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/v1/health")) {
       const body = { ok: true, startedAt: runtime.startedAt, now: new Date().toISOString(), uptimeSec: Math.floor(process.uptime()) };
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, body);
+      return writeJson(req, res, 200, body);
+    }
+
+    if (isPrivateRoute(url.pathname) && !isAuthorized(req)) {
+      return writeJson(req, res, 401, { error: "Unauthorized" });
     }
 
     if (req.method === "GET" && url.pathname === "/metrics") {
-      return writeMetrics(res, metricsPayload());
+      return writeMetrics(req, res, metricsPayload());
     }
 
     if (req.method === "GET" && (url.pathname === "/stats" || url.pathname === "/v1/stats")) {
       const snapshot = await protocolSnapshot();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, statsPayload(snapshot));
+      return writeJson(req, res, 200, statsPayload(snapshot));
     }
 
     if (req.method === "GET" && (url.pathname === "/automation/status" || url.pathname === "/v1/automation/status")) {
-      return writeJson(res, 200, {
+      return writeJson(req, res, 200, {
         keeper: runtime.keeper,
         automation: runtime.automation,
       });
     }
 
     if (req.method === "GET" && (url.pathname === "/automation/history" || url.pathname === "/v1/automation/history")) {
-      return writeJson(res, 200, {
+      return writeJson(req, res, 200, {
         generatedAt: new Date().toISOString(),
         history: runtime.automation?.history || [],
       });
@@ -449,7 +461,7 @@ export function startBackendServer() {
       if (strict) {
         const readiness = onchainWriteReadiness();
         if (!readiness.ok) {
-          return writeJson(res, 409, {
+          return writeJson(req, res, 409, {
             ok: false,
             error: "onchain-write-not-ready",
             readiness,
@@ -461,14 +473,14 @@ export function startBackendServer() {
         const taskRows = Object.values(payload || {});
         const sent = taskRows.filter((x) => Boolean(x?.txHash)).length;
         if (sent === 0) {
-          return writeJson(res, 409, {
+          return writeJson(req, res, 409, {
             ok: false,
             error: "no-automation-transactions-submitted",
             payload,
           });
         }
       }
-      return writeJson(res, 200, { ok: true, payload });
+      return writeJson(req, res, 200, { ok: true, payload });
     }
 
     if (req.method === "POST" && (url.pathname === "/keeper/maintenance/run" || url.pathname === "/v1/keeper/maintenance/run")) {
@@ -477,7 +489,7 @@ export function startBackendServer() {
       if (strict) {
         const readiness = onchainWriteReadiness();
         if (!readiness.ok) {
-          return writeJson(res, 409, {
+          return writeJson(req, res, 409, {
             ok: false,
             error: "onchain-write-not-ready",
             readiness,
@@ -489,13 +501,13 @@ export function startBackendServer() {
         autoClaim: body?.autoClaim ?? true,
       });
       if (strict && !payload?.registerTx && !payload?.claimTx) {
-        return writeJson(res, 409, {
+        return writeJson(req, res, 409, {
           ok: false,
           error: "no-keeper-transactions-submitted",
           payload,
         });
       }
-      return writeJson(res, 200, { ok: true, payload });
+      return writeJson(req, res, 200, { ok: true, payload });
     }
 
     if (req.method === "GET" && (url.pathname === "/automation/gap-status" || url.pathname === "/v1/automation/gap-status")) {
@@ -517,31 +529,54 @@ export function startBackendServer() {
         circuitResetPath: Boolean(config.circuitAutoReset),
         multiWalletGas: Boolean(config.gasPrivateKey),
       };
-      return writeJson(res, 200, { generatedAt: new Date().toISOString(), status });
+      return writeJson(req, res, 200, { generatedAt: new Date().toISOString(), status });
     }
 
     if (req.method === "GET" && (url.pathname === "/positions" || url.pathname === "/v1/positions")) {
       const positions = getTrackedPositions().map((x) => x.toString());
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, { count: positions.length, positionIds: positions });
+      return writeJson(req, res, 200, { count: positions.length, positionIds: positions });
     }
 
     if (req.method === "GET" && (url.pathname === "/orders" || url.pathname === "/v1/orders")) {
       const orders = getTrackedOrderIds().map((x) => x.toString());
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, { count: orders.length, orderIds: orders });
+      return writeJson(req, res, 200, { count: orders.length, orderIds: orders });
     }
 
     if (req.method === "GET" && (url.pathname === "/markets" || url.pathname === "/v1/markets")) {
       const snapshot = getMarketSnapshot();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, snapshot);
+      return writeJson(req, res, 200, snapshot);
+    }
+
+    if (req.method === "GET" && (url.pathname === "/mapped-prices" || url.pathname === "/v1/mapped-prices")) {
+      const snapshot = getMarketSnapshot();
+      const prices = (snapshot?.markets || []).map((m) => {
+        const chainlink = m?.externalPrice?.chainlink;
+        const pyth = m?.externalPrice?.pyth;
+        const mappedPrice = Number.isFinite(Number(chainlink))
+          ? Number(chainlink)
+          : Number.isFinite(Number(pyth))
+            ? Number(pyth)
+            : null;
+        const source = mappedPrice === null ? null : Number.isFinite(Number(chainlink)) ? "chainlink" : "pyth";
+        return {
+          marketIndex: m?.marketIndex ?? null,
+          marketId: m?.marketId ?? null,
+          symbol: m?.symbol ?? null,
+          mappedPrice,
+          source,
+        };
+      });
+      log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
+      return writeJson(req, res, 200, { updatedAt: snapshot?.updatedAt || null, count: prices.length, prices });
     }
 
     if (req.method === "GET" && (url.pathname === "/business/overview" || url.pathname === "/v1/business/overview")) {
       const payload = await fetchBusinessOverview();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, payload);
+      return writeJson(req, res, 200, payload);
     }
 
     if (req.method === "GET" && (url.pathname === "/business/flows" || url.pathname === "/v1/business/flows")) {
@@ -549,7 +584,7 @@ export function startBackendServer() {
         key,
         configured: Boolean(flowConfig(key)?.address?.()),
       }));
-      return writeJson(res, 200, { generatedAt: new Date().toISOString(), flows: payload });
+      return writeJson(req, res, 200, { generatedAt: new Date().toISOString(), flows: payload });
     }
 
     if (req.method === "POST" && (url.pathname === "/business/execute" || url.pathname === "/v1/business/execute")) {
@@ -557,13 +592,13 @@ export function startBackendServer() {
       const strict = Boolean(body?.strict);
       if (strict) {
         const readiness = onchainWriteReadiness();
-        if (!readiness.ok) return writeJson(res, 409, { ok: false, error: "onchain-write-not-ready", readiness });
+        if (!readiness.ok) return writeJson(req, res, 409, { ok: false, error: "onchain-write-not-ready", readiness });
       }
       const flow = String(body?.flow || "");
-      if (!flow) return writeJson(res, 400, { ok: false, error: "flow-required", supported: listBusinessFlowKeys() });
+      if (!flow) return writeJson(req, res, 400, { ok: false, error: "flow-required", supported: listBusinessFlowKeys() });
       const payload = await executeBusinessFlow(flow);
-      if (strict && !payload?.txHash) return writeJson(res, 409, { ok: false, error: "no-business-flow-transaction-submitted", payload });
-      return writeJson(res, 200, { ok: Boolean(payload?.txHash), payload });
+      if (strict && !payload?.txHash) return writeJson(req, res, 409, { ok: false, error: "no-business-flow-transaction-submitted", payload });
+      return writeJson(req, res, 200, { ok: Boolean(payload?.txHash), payload });
     }
 
     if (req.method === "POST" && (url.pathname === "/business/execute-all" || url.pathname === "/v1/business/execute-all")) {
@@ -571,60 +606,60 @@ export function startBackendServer() {
       const strict = Boolean(body?.strict);
       if (strict) {
         const readiness = onchainWriteReadiness();
-        if (!readiness.ok) return writeJson(res, 409, { ok: false, error: "onchain-write-not-ready", readiness });
+        if (!readiness.ok) return writeJson(req, res, 409, { ok: false, error: "onchain-write-not-ready", readiness });
       }
       const payload = await executeAllBusinessFlows();
       const sent = Object.values(payload || {}).filter((x) => Boolean(x?.txHash)).length;
-      if (strict && sent === 0) return writeJson(res, 409, { ok: false, error: "no-business-flow-transactions-submitted", payload });
-      return writeJson(res, 200, { ok: sent > 0, sent, payload });
+      if (strict && sent === 0) return writeJson(req, res, 409, { ok: false, error: "no-business-flow-transactions-submitted", payload });
+      return writeJson(req, res, 200, { ok: sent > 0, sent, payload });
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/contracts" || url.pathname === "/v1/ai/contracts")) {
       const payload = await fetchAiContractsState();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, payload);
+      return writeJson(req, res, 200, payload);
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/chat/sessions" || url.pathname === "/v1/ai/chat/sessions")) {
-      return writeJson(res, 200, { sessions: listChatSessions() });
+      return writeJson(req, res, 200, { sessions: listChatSessions() });
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/chat/sessions" || url.pathname === "/v1/ai/chat/sessions")) {
       const body = await readJsonBody(req);
       const session = createChatSession(body?.title || "New chat");
       await persistChat();
-      return writeJson(res, 200, { session });
+      return writeJson(req, res, 200, { session });
     }
 
     if (req.method === "PATCH" && (url.pathname === "/ai/chat/sessions" || url.pathname === "/v1/ai/chat/sessions")) {
       const body = await readJsonBody(req);
       const session = renameChatSession(body?.sessionId, body?.title || "New chat");
-      if (!session) return writeJson(res, 404, { error: "Session not found" });
+      if (!session) return writeJson(req, res, 404, { error: "Session not found" });
       await persistChat();
-      return writeJson(res, 200, { session });
+      return writeJson(req, res, 200, { session });
     }
 
     if (req.method === "DELETE" && (url.pathname === "/ai/chat/sessions" || url.pathname === "/v1/ai/chat/sessions")) {
       const sessionId = url.searchParams.get("sessionId");
-      if (!sessionId) return writeJson(res, 400, { error: "sessionId-required" });
+      if (!sessionId) return writeJson(req, res, 400, { error: "sessionId-required" });
       const removed = deleteChatSession(sessionId);
-      if (!removed) return writeJson(res, 404, { error: "Session not found" });
+      if (!removed) return writeJson(req, res, 404, { error: "Session not found" });
       await persistChat();
-      return writeJson(res, 200, { ok: true });
+      return writeJson(req, res, 200, { ok: true });
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/chat/history" || url.pathname === "/v1/ai/chat/history")) {
       const sessionId = url.searchParams.get("sessionId");
       const session = getChatSession(sessionId);
-      if (!session) return writeJson(res, 404, { error: "Session not found" });
-      return writeJson(res, 200, { session });
+      if (!session) return writeJson(req, res, 404, { error: "Session not found" });
+      return writeJson(req, res, 200, { session });
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/chat/message" || url.pathname === "/v1/ai/chat/message")) {
       const body = await readJsonBody(req);
       let text = String(body?.message || "").trim();
       const regenerate = Boolean(body?.regenerate);
-      if (!text && !regenerate) return writeJson(res, 400, { error: "message-required" });
+      if (!text && !regenerate) return writeJson(req, res, 400, { error: "message-required" });
       let session = getChatSession(body?.sessionId);
       if (!session) session = createChatSession((text || "New chat").slice(0, 64));
       if (regenerate) {
@@ -632,7 +667,7 @@ export function startBackendServer() {
         const latest = getChatSession(session.id)?.messages || [];
         const lastUser = [...latest].reverse().find((m) => m?.role === "user");
         text = String(lastUser?.text || "").trim();
-        if (!text) return writeJson(res, 400, { error: "no-user-message-to-regenerate" });
+        if (!text) return writeJson(req, res, 400, { error: "no-user-message-to-regenerate" });
       } else {
         appendChatMessage(session.id, { role: "user", text, at: new Date().toISOString() });
       }
@@ -662,7 +697,7 @@ export function startBackendServer() {
       appendChatMessage(session.id, { role: "assistant", text: assistantText, at: new Date().toISOString(), meta: { decision } });
       await persistChat();
       const updated = getChatSession(session.id);
-      return writeJson(res, 200, {
+      return writeJson(req, res, 200, {
         sessionId: session.id,
         assistant: assistantText,
         advice,
@@ -675,13 +710,13 @@ export function startBackendServer() {
     if (req.method === "GET" && (url.pathname === "/ai/onchain-bots" || url.pathname === "/v1/ai/onchain-bots")) {
       const payload = await fetchOnchainBots(Number(url.searchParams.get("limit") || 20));
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0, enabled: payload.enabled });
-      return writeJson(res, 200, payload);
+      return writeJson(req, res, 200, payload);
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/wiring/status" || url.pathname === "/v1/ai/wiring/status")) {
       const payload = await wiringStatus();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0, ok: payload.ok });
-      return writeJson(res, 200, payload);
+      return writeJson(req, res, 200, payload);
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/strategy" || url.pathname === "/v1/ai/strategy")) {
@@ -691,7 +726,7 @@ export function startBackendServer() {
       const tunedIdeas = tuneIdeasForPrompt(rawInsights.topIdeas || [], prompt);
       const insights = { ...rawInsights, topIdeas: tunedIdeas };
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, insights);
+      return writeJson(req, res, 200, insights);
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/opportunities" || url.pathname === "/v1/ai/opportunities")) {
@@ -706,7 +741,7 @@ export function startBackendServer() {
         .filter((i) => i.action !== "wait" && Number(i.adjustedConfidence ?? i.confidence ?? 0) >= minConfidence)
         .slice(0, maxIdeas);
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, {
+      return writeJson(req, res, 200, {
         generatedAt: insights.generatedAt,
         model: insights.model,
         opportunities,
@@ -716,7 +751,7 @@ export function startBackendServer() {
     if (req.method === "GET" && (url.pathname === "/ai/opportunities/stream" || url.pathname === "/v1/ai/opportunities/stream")) {
       const minConfidence = Number(url.searchParams.get("minConfidence") || 0.55);
       const maxIdeas = Math.max(1, Math.min(20, Number(url.searchParams.get("limit") || 5)));
-      writeSseHead(res);
+      writeSseHead(req, res);
       const push = () => {
         const snapshot = getMarketSnapshot();
         const prompt = url.searchParams.get("prompt") || "";
@@ -747,7 +782,7 @@ export function startBackendServer() {
         { minConfidence, openaiApiKey: config.openaiApiKey, openaiModel: config.openaiModel },
       );
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, advice);
+      return writeJson(req, res, 200, advice);
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/research" || url.pathname === "/v1/ai/research")) {
@@ -774,7 +809,7 @@ export function startBackendServer() {
         } : null,
       };
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, research);
+      return writeJson(req, res, 200, research);
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/strategy/compile" || url.pathname === "/v1/ai/strategy/compile")) {
@@ -784,7 +819,7 @@ export function startBackendServer() {
       const business = await fetchBusinessOverview();
       const compiled = compileStrategyIntent(body, marketSnapshot, aiContracts, business);
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, compiled);
+      return writeJson(req, res, 200, compiled);
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/bots" || url.pathname === "/v1/ai/bots")) {
@@ -796,17 +831,17 @@ export function startBackendServer() {
       const bot = createBot(compiled);
       await persistBots();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, bot);
+      return writeJson(req, res, 200, bot);
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/onchain-bots/register" || url.pathname === "/v1/ai/onchain-bots/register")) {
-      if (!onchainBotsEnabled()) return writeJson(res, 400, { error: "ONCHAIN_BOT_MANAGER not configured" });
+      if (!onchainBotsEnabled()) return writeJson(req, res, 400, { error: "ONCHAIN_BOT_MANAGER not configured" });
       const body = await readJsonBody(req);
       const localBot = listBots().find((x) => String(x.id) === String(body?.id));
-      if (!localBot) return writeJson(res, 404, { error: "Local bot not found" });
+      if (!localBot) return writeJson(req, res, 404, { error: "Local bot not found" });
       const idea = localBot?.compiledStrategy?.selectedIdea;
       const market = (getMarketSnapshot()?.markets || []).find((m) => String(m.marketIndex) === String(idea?.marketIndex));
-      if (!market) return writeJson(res, 400, { error: "Missing market context for bot" });
+      if (!market) return writeJson(req, res, 400, { error: "Missing market context for bot" });
       const payload = await registerOnchainBot({
         owner: body?.owner,
         marketId: market.marketId,
@@ -815,60 +850,60 @@ export function startBackendServer() {
       });
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0, tx: payload?.txHash || null });
       const txStatus = payload?.txHash ? await fetchTxStatus(payload.txHash, Number(body?.waitMs || 0)) : { txHash: null, status: "not-submitted" };
-      return writeJson(res, 200, { ok: true, ...payload, txStatus });
+      return writeJson(req, res, 200, { ok: true, ...payload, txStatus });
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/onchain-bots/toggle" || url.pathname === "/v1/ai/onchain-bots/toggle")) {
-      if (!onchainBotsEnabled()) return writeJson(res, 400, { error: "ONCHAIN_BOT_MANAGER not configured" });
+      if (!onchainBotsEnabled()) return writeJson(req, res, 400, { error: "ONCHAIN_BOT_MANAGER not configured" });
       const body = await readJsonBody(req);
       const payload = await setOnchainBotActive({ botId: body?.botId, active: body?.active });
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0, tx: payload?.txHash || null });
       const txStatus = payload?.txHash ? await fetchTxStatus(payload.txHash, Number(body?.waitMs || 0)) : { txHash: null, status: "not-submitted" };
-      return writeJson(res, 200, { ok: true, ...payload, txStatus });
+      return writeJson(req, res, 200, { ok: true, ...payload, txStatus });
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/tx/status" || url.pathname === "/v1/ai/tx/status")) {
       const txHash = url.searchParams.get("txHash") || "";
-      if (!txHash) return writeJson(res, 400, { error: "txHash required" });
+      if (!txHash) return writeJson(req, res, 400, { error: "txHash required" });
       const payload = await fetchTxStatus(txHash, Number(url.searchParams.get("waitMs") || 0));
-      return writeJson(res, 200, payload);
+      return writeJson(req, res, 200, payload);
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/tx/status" || url.pathname === "/v1/ai/tx/status")) {
       const body = await readJsonBody(req);
-      if (!body?.txHash) return writeJson(res, 400, { error: "txHash required" });
+      if (!body?.txHash) return writeJson(req, res, 400, { error: "txHash required" });
       const payload = await fetchTxStatus(body.txHash, Number(body?.waitMs || 0));
-      return writeJson(res, 200, payload);
+      return writeJson(req, res, 200, payload);
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/bots" || url.pathname === "/v1/ai/bots")) {
       const items = listBots();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, { bots: items });
+      return writeJson(req, res, 200, { bots: items });
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/bots/performance" || url.pathname === "/v1/ai/bots/performance")) {
       const payload = botPerformanceSnapshot();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, payload);
+      return writeJson(req, res, 200, payload);
     }
 
     if (req.method === "GET" && (url.pathname === "/ai/bots/recommendation" || url.pathname === "/v1/ai/bots/recommendation")) {
       const id = url.searchParams.get("id");
       const bot = listBots().find((x) => String(x.id) === String(id || ""));
-      if (!bot) return writeJson(res, 404, { error: "Bot not found" });
+      if (!bot) return writeJson(req, res, 404, { error: "Bot not found" });
       const payload = buildBotRecommendation(bot);
-      return writeJson(res, 200, payload);
+      return writeJson(req, res, 200, payload);
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/bots/follow" || url.pathname === "/v1/ai/bots/follow")) {
       const body = await readJsonBody(req);
       const payload = followBot(body?.id, body?.followerId, body?.allocationUsd);
-      if (!payload) return writeJson(res, 404, { error: "Bot not found" });
-      if (payload?.error) return writeJson(res, 400, payload);
+      if (!payload) return writeJson(req, res, 404, { error: "Bot not found" });
+      if (payload?.error) return writeJson(req, res, 400, payload);
       await persistBots();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, payload);
+      return writeJson(req, res, 200, payload);
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/bots/autorun" || url.pathname === "/v1/ai/bots/autorun")) {
@@ -878,20 +913,20 @@ export function startBackendServer() {
         mode: body?.mode,
         intervalSec: body?.intervalSec,
       });
-      if (!payload) return writeJson(res, 404, { error: "Bot not found" });
+      if (!payload) return writeJson(req, res, 404, { error: "Bot not found" });
       await persistBots();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, payload);
+      return writeJson(req, res, 200, payload);
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/bots/preflight" || url.pathname === "/v1/ai/bots/preflight")) {
       const body = await readJsonBody(req);
       const bot = listBots().find((x) => String(x.id) === String(body?.id));
-      if (!bot) return writeJson(res, 404, { error: "Bot not found" });
+      if (!bot) return writeJson(req, res, 404, { error: "Bot not found" });
       const snapshot = getMarketSnapshot();
       const readiness = evaluateLiveReadiness(bot, snapshot, body?.owner);
       if (!readiness.ok) {
-        return writeJson(res, 200, {
+        return writeJson(req, res, 200, {
           botId: bot.id,
           liveExecutionEnabled: config.liveExecutionEnabled,
           preflight: { ok: false, reason: `readiness-failed: ${readiness.reasons.join(",")}` },
@@ -904,7 +939,7 @@ export function startBackendServer() {
       const preflight = await preflightLiveOrder(params);
       const ticket = preflight.ok ? createPreflightTicket({ botId: bot.id, owner: body?.owner, params }) : null;
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0, preflightOk: preflight.ok });
-      return writeJson(res, 200, {
+      return writeJson(req, res, 200, {
         botId: bot.id,
         liveExecutionEnabled: config.liveExecutionEnabled,
         preflight,
@@ -919,15 +954,15 @@ export function startBackendServer() {
       const snapshot = getMarketSnapshot();
       const wantsLive = body?.runMode === "live";
       if (!wantsLive) {
-        return writeJson(res, 400, { error: "runMode=live required", hint: "Paper execution is disabled; use real on-chain mode." });
+        return writeJson(req, res, 400, { error: "runMode=live required", hint: "Paper execution is disabled; use real on-chain mode." });
       }
       if (!config.liveExecutionEnabled) {
-        return writeJson(res, 400, { error: "LIVE_EXECUTION_ENABLED=false", hint: "Set LIVE_EXECUTION_ENABLED=true to submit real transactions." });
+        return writeJson(req, res, 400, { error: "LIVE_EXECUTION_ENABLED=false", hint: "Set LIVE_EXECUTION_ENABLED=true to submit real transactions." });
       }
       const runMode = "live";
       const ticket = getPreflightTicket(body?.preflightId);
       if (!ticket || String(ticket.botId) !== String(body?.id)) {
-        return writeJson(res, 400, { error: "valid preflight required", hint: "Call /v1/ai/bots/preflight first" });
+        return writeJson(req, res, 400, { error: "valid preflight required", hint: "Call /v1/ai/bots/preflight first" });
       }
       let result = null;
       try {
@@ -953,33 +988,33 @@ export function startBackendServer() {
           },
         });
       } catch (e) {
-        return writeJson(res, 409, {
+        return writeJson(req, res, 409, {
           error: "onchain execution failed",
           reason: e?.message || String(e),
           liveExecutionEnabled: config.liveExecutionEnabled,
         });
       }
-      if (!result) return writeJson(res, 404, { error: "Bot not found" });
+      if (!result) return writeJson(req, res, 404, { error: "Bot not found" });
       if (!result?.lastOnchainTx) {
-        return writeJson(res, 409, { error: "onchain transaction not submitted", status: result.status, reason: result.lastRunReason });
+        return writeJson(req, res, 409, { error: "onchain transaction not submitted", status: result.status, reason: result.lastRunReason });
       }
       await persistBots();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
       const txStatus = result?.lastOnchainTx ? await fetchTxStatus(result.lastOnchainTx, Number(body?.waitMs || 0)) : { txHash: null, status: "not-submitted" };
-      return writeJson(res, 200, { ...result, liveExecutionEnabled: config.liveExecutionEnabled, txStatus });
+      return writeJson(req, res, 200, { ...result, liveExecutionEnabled: config.liveExecutionEnabled, txStatus });
     }
 
     if (req.method === "POST" && (url.pathname === "/ai/bots/consent" || url.pathname === "/v1/ai/bots/consent")) {
       const body = await readJsonBody(req);
       const result = grantBotConsent(body?.id, body?.signer || "user");
-      if (!result) return writeJson(res, 404, { error: "Bot not found" });
+      if (!result) return writeJson(req, res, 404, { error: "Bot not found" });
       await persistBots();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
-      return writeJson(res, 200, result);
+      return writeJson(req, res, 200, result);
     }
 
     log("warn", "api_request_not_found", { path: url.pathname, status: 404, durMs: Date.now() - t0 });
-    return writeJson(res, 404, { error: "Not found" });
+    return writeJson(req, res, 404, { error: "Not found" });
   });
 
   server.listen(config.apiPort, config.apiHost, () => {
