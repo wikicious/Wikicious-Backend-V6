@@ -3,7 +3,9 @@ import "dotenv/config";
 export const config = {
   privateKey: requireEnv("PRIVATE_KEY"),
   rpcUrl: requireEnv("RPC_URL"),
+  rpcUrls: parseList("RPC_URLS"),
   rpcWsUrl: process.env.RPC_WS_URL || "",
+  rpcWsUrls: parseList("RPC_WS_URLS"),
   pollIntervalMs: Number(process.env.POLL_INTERVAL_MS || 4000),
   minLiquidationProfit: Number(process.env.MIN_LIQUIDATION_PROFIT || 1),
   dryRun: process.env.DRY_RUN === "true",
@@ -57,4 +59,11 @@ function requireEnv(key) {
     process.exit(1);
   }
   return v;
+}
+
+function parseList(key) {
+  return String(process.env[key] || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }

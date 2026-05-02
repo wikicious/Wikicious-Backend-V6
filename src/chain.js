@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, http, parseGwei } from "viem";
+import { createPublicClient, createWalletClient, fallback, http, parseGwei } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { arbitrum } from "viem/chains";
 import { config } from "./config.js";
@@ -8,15 +8,19 @@ export const txAccount = config.gasPrivateKey
   ? privateKeyToAccount(config.gasPrivateKey.startsWith("0x") ? config.gasPrivateKey : `0x${config.gasPrivateKey}`)
   : account;
 
+const rpcHttpUrls = Array.from(new Set([config.rpcUrl, ...(config.rpcUrls || [])].filter(Boolean)));
+const rpcTransports = rpcHttpUrls.map((url) => http(url, { timeout: 10_000, retryCount: 0 }));
+const publicTransport = rpcTransports.length > 1 ? fallback(rpcTransports, { rank: true }) : rpcTransports[0];
+
 export const publicClient = createPublicClient({
   chain: arbitrum,
-  transport: http(config.rpcUrl),
+  transport: publicTransport,
 });
 
 export const walletClient = createWalletClient({
   account: txAccount,
   chain: arbitrum,
-  transport: http(config.rpcUrl),
+  transport: http(config.rpcUrl, { timeout: 10_000, retryCount: 0 }),
 });
 
 /** Send a tx with simulation + gas cap. Returns hash or null if skipped. */
