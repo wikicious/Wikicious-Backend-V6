@@ -550,6 +550,29 @@ export function startBackendServer() {
       return writeJson(req, res, 200, snapshot);
     }
 
+    if (req.method === "GET" && (url.pathname === "/mapped-prices" || url.pathname === "/v1/mapped-prices")) {
+      const snapshot = getMarketSnapshot();
+      const prices = (snapshot?.markets || []).map((m) => {
+        const chainlink = m?.externalPrice?.chainlink;
+        const pyth = m?.externalPrice?.pyth;
+        const mappedPrice = Number.isFinite(Number(chainlink))
+          ? Number(chainlink)
+          : Number.isFinite(Number(pyth))
+            ? Number(pyth)
+            : null;
+        const source = mappedPrice === null ? null : Number.isFinite(Number(chainlink)) ? "chainlink" : "pyth";
+        return {
+          marketIndex: m?.marketIndex ?? null,
+          marketId: m?.marketId ?? null,
+          symbol: m?.symbol ?? null,
+          mappedPrice,
+          source,
+        };
+      });
+      log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
+      return writeJson(req, res, 200, { updatedAt: snapshot?.updatedAt || null, count: prices.length, prices });
+    }
+
     if (req.method === "GET" && (url.pathname === "/business/overview" || url.pathname === "/v1/business/overview")) {
       const payload = await fetchBusinessOverview();
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
