@@ -37,6 +37,30 @@ export async function refreshPriceCache() {
     }
   };
 
+  const STOOQ_TICKERS = {
+    USDJPY: "usdjpy", USDCHF: "usdchf", USDCAD: "usdcad", NZDUSD: "nzdusd",
+    EURGBP: "eurgbp", EURJPY: "eurjpy", GBPJPY: "gbpjpy", XAUUSD: "xauusd",
+    XAGUSD: "xagusd", WTIUSD: "cl.f", BRENTUSD: "brent.f", SPX500: "^spx",
+    NAS100: "^ndq", DJI30: "^dji", GER40: "^dax",
+  };
+
+  const fetchStooq = async (symbol) => {
+    const t = STOOQ_TICKERS[symbol];
+    if (!t) return null;
+    try {
+      const res = await fetch(`https://stooq.com/q/l/?s=${encodeURIComponent(t)}&f=sd2t2ohlcv&h&e=csv`);
+      if (!res.ok) return null;
+      const text = await res.text();
+      const lines = text.trim().split("\n");
+      if (lines.length < 2) return null;
+      const parts = lines[1].split(",");
+      const close = Number(parts[6] || 0);
+      return Number.isFinite(close) && close > 0 ? close : null;
+    } catch {
+      return null;
+    }
+  };
+
   await Promise.all(unique.map(async (symbol) => {
     try {
       const pair = quoteSymbol(symbol);
@@ -55,6 +79,13 @@ export async function refreshPriceCache() {
     const yahooPrice = await fetchYahoo(symbol);
     if (yahooPrice) {
       setCachedPrice(symbol, yahooPrice, "yahoo");
+      mapped += 1;
+      return;
+    }
+
+    const stooqPrice = await fetchStooq(symbol);
+    if (stooqPrice) {
+      setCachedPrice(symbol, stooqPrice, "stooq");
       mapped += 1;
     }
   }));
