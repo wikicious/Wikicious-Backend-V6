@@ -1,6 +1,20 @@
 import { getMarketSnapshot } from "./marketData.js";
 import { setCachedPrice } from "./priceCache.js";
 
+function parseManualOverrides() {
+  const raw = String(process.env.PRICE_MANUAL_OVERRIDES || "").trim();
+  if (!raw) return new Map();
+  const out = new Map();
+  for (const part of raw.split(",")) {
+    const [k, v] = part.split(":");
+    const symbol = String(k || "").trim().toUpperCase();
+    const price = Number(String(v || "").trim());
+    if (!symbol || !Number.isFinite(price) || price <= 0) continue;
+    out.set(symbol, price);
+  }
+  return out;
+}
+
 function quoteSymbol(symbol) {
   const s = String(symbol || "").toUpperCase();
   if (s.endsWith("USDT")) return s;
@@ -14,6 +28,7 @@ export async function refreshPriceCache() {
   if (!unique.length) return { symbols: 0, mapped: 0 };
 
   let mapped = 0;
+  const manualOverrides = parseManualOverrides();
   const YAHOO_TICKERS = {
     EURUSD: "EURUSD=X", GBPUSD: "GBPUSD=X", USDJPY: "JPY=X", USDCHF: "CHF=X",
     AUDUSD: "AUDUSD=X", USDCAD: "CAD=X", NZDUSD: "NZDUSD=X", EURGBP: "EURGBP=X",
@@ -62,6 +77,13 @@ export async function refreshPriceCache() {
   };
 
   await Promise.all(unique.map(async (symbol) => {
+    const manual = manualOverrides.get(symbol);
+    if (manual) {
+      setCachedPrice(symbol, manual, "manual");
+      mapped += 1;
+      return;
+    }
+
     try {
       const pair = quoteSymbol(symbol);
       const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(pair)}`);
