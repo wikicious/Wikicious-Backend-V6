@@ -2,6 +2,7 @@ import { publicClient } from "./chain.js";
 import { CONTRACTS, ORACLE_ABI, PERP_ABI } from "./contracts.js";
 import { config } from "./config.js";
 import { runtime, pushError } from "./state.js";
+import { getCachedPrice } from "./priceCache.js";
 
 let cache = [];
 let lastRefreshMs = 0;
@@ -30,6 +31,32 @@ function toNum(v, fallback = 0) {
   if (v === null || v === undefined) return fallback;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function symbolCandidates(symbol) {
+  const raw = String(symbol || "").toUpperCase().trim();
+  if (!raw) return [];
+  const base = raw.endsWith("USDT") ? raw.slice(0, -4) : raw;
+  return Array.from(new Set([
+    raw,
+    base,
+    `${base}USDT`,
+    `${base}/USDT`,
+    `${base}-USDT`,
+    `${base}USD`,
+    `${base}/USD`,
+    `${base}-USD`,
+  ]));
+}
+
+function lookupExternalPrice(feed, symbol) {
+  if (!feed || typeof feed !== "object") return null;
+  for (const key of symbolCandidates(symbol)) {
+    if (Object.prototype.hasOwnProperty.call(feed, key)) {
+      return feed[key];
+    }
+  }
+  return null;
 }
 
 function updatePriceHistory(symbol, price, atMs) {
@@ -204,8 +231,8 @@ export async function refreshMarketSnapshot(force = false) {
             },
             signals,
             externalPrice: {
-              pyth: external?.pyth?.[m.symbol] ?? null,
-              chainlink: external?.chainlink?.[m.symbol] ?? null,
+              pyth: lookupExternalPrice(external?.pyth, m.symbol),
+              chainlink: lookupExternalPrice(external?.chainlink, m.symbol) ?? getCachedPrice(m.symbol)?.price ?? null,
             },
           };
         }),

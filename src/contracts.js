@@ -1,10 +1,12 @@
 // Wikicious V6 — addresses + minimal ABIs needed by the keeper.
 // Keep this in sync with src/lib/contracts.ts in the frontend repo.
 
+const envOr = (key, fallback) => process.env[key] || fallback;
+
 export const CONTRACTS = {
-  WikiPerp: "0x723f653a3DEFC45FB934BBF81f1411883a977468",
+  WikiPerp: envOr("WIKI_PERP_ADDRESS", "0x723f653a3DEFC45FB934BBF81f1411883a977468"),
   WikiLiquidator: "0x1fCe4e7c16386af492b6275DDDEcA747f6559a65",
-  WikiOracle: "0xA99583D3cd272F95b8f08b32297f072f5164D0DC",
+  WikiOracle: envOr("WIKI_ORACLE_ADDRESS", "0xA99583D3cd272F95b8f08b32297f072f5164D0DC"),
   WikiKeeperRegistry: "0x27F57e95cca2b4c88a50490212a2cCDDb3168e34",
   WikiCircuitBreaker: "0xa24D3Dc833566A59e7130bf42a8C4f1908A0b4ae",
   WikiConditionalOrder: "0xCBed48F05dAF5db381503e43EB04d62D7ca40Ba7",
