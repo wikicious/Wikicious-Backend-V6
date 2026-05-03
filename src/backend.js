@@ -7,6 +7,7 @@ import { runtime } from "./state.js";
 import { getTrackedPositions } from "./liquidator.js";
 import { getTrackedOrderIds } from "./orders.js";
 import { getMarketSnapshot, refreshMarketSnapshot } from "./marketData.js";
+import { getCachedPricesSnapshot } from "./priceCache.js";
 import { buildChatReplyWithLlm, buildStrategyInsights, buildTradeAdviceWithLlm, buildTradeDecision, tuneIdeasForPrompt } from "./ai.js";
 import { fetchAiContractsState } from "./aiContracts.js";
 import { fetchBusinessOverview } from "./businessFlows.js";
@@ -573,6 +574,12 @@ export function startBackendServer() {
       });
       log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
       return writeJson(req, res, 200, { updatedAt: snapshot?.updatedAt || null, count: prices.length, prices });
+    }
+
+    if (req.method === "GET" && (url.pathname === "/prices" || url.pathname === "/v1/prices")) {
+      const snapshot = getCachedPricesSnapshot();
+      log("info", "api_request", { path: url.pathname, status: 200, durMs: Date.now() - t0 });
+      return writeJson(req, res, 200, snapshot);
     }
 
     if (req.method === "GET" && (url.pathname === "/business/overview" || url.pathname === "/v1/business/overview")) {

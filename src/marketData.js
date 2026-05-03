@@ -2,6 +2,7 @@ import { publicClient } from "./chain.js";
 import { CONTRACTS, ORACLE_ABI, PERP_ABI } from "./contracts.js";
 import { config } from "./config.js";
 import { runtime, pushError } from "./state.js";
+import { getCachedPrice } from "./priceCache.js";
 
 let cache = [];
 let lastRefreshMs = 0;
@@ -231,7 +232,7 @@ export async function refreshMarketSnapshot(force = false) {
             signals,
             externalPrice: {
               pyth: lookupExternalPrice(external?.pyth, m.symbol),
-              chainlink: lookupExternalPrice(external?.chainlink, m.symbol),
+              chainlink: lookupExternalPrice(external?.chainlink, m.symbol) ?? getCachedPrice(m.symbol)?.price ?? null,
             },
           };
         }),
