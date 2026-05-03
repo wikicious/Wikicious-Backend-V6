@@ -562,8 +562,9 @@ export function startBackendServer() {
       const prices = (snapshot?.markets || []).map((m) => {
         const chainlink = toPositiveFinite(m?.externalPrice?.chainlink);
         const pyth = toPositiveFinite(m?.externalPrice?.pyth);
-        const mappedPrice = chainlink ?? pyth ?? null;
-        const source = chainlink !== null ? "chainlink" : pyth !== null ? "pyth" : null;
+        const internal = toPositiveFinite(m?.price);
+        const mappedPrice = chainlink ?? pyth ?? internal ?? null;
+        const source = chainlink !== null ? "chainlink" : pyth !== null ? "pyth" : internal !== null ? "internal" : null;
         return {
           marketIndex: m?.marketIndex ?? null,
           marketId: m?.marketId ?? null,
