@@ -6,6 +6,8 @@
 import "dotenv/config";
 import { startBackendServer } from "./backend.js";
 import { refreshMarketSnapshot } from "./marketData.js";
+import { refreshPriceCache } from "./priceFetcher.js";
+import { pushGuardianPrices } from "./pricePusher.js";
 import { runtime, pushError } from "./state.js";
 import { alert } from "./alerts.js";
 import { log } from "./logger.js";
@@ -27,6 +29,24 @@ async function main() {
       pushError("marketData.refresh", e);
     }
   }, Number(process.env.MARKET_REFRESH_MS || 5000));
+
+  setInterval(async () => {
+    try {
+      await refreshPriceCache();
+    } catch (e) {
+      pushError("priceCache.refresh", e);
+    }
+  }, Number(process.env.PRICE_FETCH_INTERVAL_MS || 15000));
+
+  if (process.env.PRICE_PUSH_ENABLED === "true") {
+    setInterval(async () => {
+      try {
+        await pushGuardianPrices(Number(process.env.PRICE_PUSH_BATCH_SIZE || 8));
+      } catch (e) {
+        pushError("pricePush.refresh", e);
+      }
+    }, Number(process.env.PRICE_PUSH_INTERVAL_MS || 30000));
+  }
 
   log("info", `Backend API listening on port ${process.env.API_PORT || 8787}`);
 }
